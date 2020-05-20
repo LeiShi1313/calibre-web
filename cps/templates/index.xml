@@ -21,7 +21,7 @@
     <content type="text">{{_('Popular publications from this catalog based on Downloads.')}}</content>
   </entry>
   <entry>
-    <title>{{_('Best rated Books')}}</title>
+    <title>{{_('Top Rated Books')}}</title>
     <link href="{{url_for('opds.feed_best_rated')}}" type="application/atom+xml;profile=opds-catalog"/>
     <id>{{url_for('opds.feed_best_rated')}}</id>
     <updated>{{ current_time }}</updated>
@@ -93,6 +93,14 @@
     <content type="text">{{_('Books ordered by Languages')}}</content>
   </entry>
   <entry>
+    <title>{{_('Ratings')}}</title>
+    <link href="{{url_for('opds.feed_ratingindex')}}" type="application/atom+xml;profile=opds-catalog"/>
+    <id>{{url_for('opds.feed_ratingindex')}}</id>
+    <updated>{{ current_time }}</updated>
+    <content type="text">{{_('Books ordered by Rating')}}</content>
+  </entry>
+
+  <entry>
     <title>{{_('File formats')}}</title>
     <link href="{{url_for('opds.feed_formatindex')}}" type="application/atom+xml;profile=opds-catalog"/>
     <id>{{url_for('opds.feed_formatindex')}}</id>
@@ -100,19 +108,10 @@
     <content type="text">{{_('Books ordered by file formats')}}</content>
   </entry>
   <entry>
-    <title>{{_('Public Shelves')}}</title>
-    <link  href="{{url_for('opds.feed_shelfindex', public='public')}}" type="application/atom+xml;profile=opds-catalog"/>
-    <id>{{url_for('opds.feed_shelfindex', public="public")}}</id>
-    <updated>{{ current_time }}</updated>
-    <content type="text">{{_('Books organized in public shelfs, visible to everyone')}}</content>
-  </entry>
-  {% if not current_user.is_anonymous %}
-  <entry>
-    <title>{{_('Your Shelves')}}</title>
-    <link href="{{url_for('opds.feed_shelfindex')}}" type="application/atom+xml;profile=opds-catalog"/>
+    <title>{{_('Shelves')}}</title>
+    <link  href="{{url_for('opds.feed_shelfindex')}}" type="application/atom+xml;profile=opds-catalog"/>
     <id>{{url_for('opds.feed_shelfindex')}}</id>
     <updated>{{ current_time }}</updated>
-    <content type="text">{{_("User's own shelfs, only visible to the current user himself")}}</content>
+    <content type="text">{{_('Books organized in shelves')}}</content>
   </entry>
-  {% endif %}
 </feed>

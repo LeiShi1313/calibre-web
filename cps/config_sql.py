@@ -22,14 +22,23 @@ import os
 import json
 import sys
 
-from sqlalchemy import exc, Column, String, Integer, SmallInteger, Boolean
+from sqlalchemy import exc, Column, String, Integer, SmallInteger, Boolean, BLOB
 from sqlalchemy.ext.declarative import declarative_base
 
-from . import constants, cli, logger
+from . import constants, cli, logger, ub
 
 
 log = logger.create()
 _Base = declarative_base()
+
+class _Flask_Settings(_Base):
+    __tablename__ = 'flask_settings'
+
+    id = Column(Integer, primary_key=True)
+    flask_session_key = Column(BLOB, default="")
+
+    def __init__(self, key):
+        self.flask_session_key = key
 
 
 # Baseclass for representing settings in app.db with email server settings and Calibre database settings
@@ -68,11 +77,17 @@ class _Settings(_Base):
     config_anonbrowse = Column(SmallInteger, default=0)
     config_public_reg = Column(SmallInteger, default=0)
     config_remote_login = Column(Boolean, default=False)
-
+    config_kobo_sync = Column(Boolean, default=False)
 
     config_default_role = Column(SmallInteger, default=0)
-    config_default_show = Column(SmallInteger, default=6143)
+    config_default_show = Column(SmallInteger, default=constants.ADMIN_USER_SIDEBAR)
     config_columns_to_ignore = Column(String)
+
+    config_denied_tags = Column(String, default="")
+    config_allowed_tags = Column(String, default="")
+    config_restricted_column = Column(SmallInteger, default=0)
+    config_denied_column_value = Column(String, default="")
+    config_allowed_column_value = Column(String, default="")
 
     config_use_google_drive = Column(Boolean, default=False)
     config_google_drive_folder = Column(String)
@@ -84,20 +99,22 @@ class _Settings(_Base):
 
     config_login_type = Column(Integer, default=0)
 
-    # config_oauth_provider = Column(Integer)
+    config_kobo_proxy = Column(Boolean, default=False)
 
-    config_ldap_provider_url = Column(String, default='localhost')
+
+    config_ldap_provider_url = Column(String, default='example.org')
     config_ldap_port = Column(SmallInteger, default=389)
-    config_ldap_schema = Column(String, default='ldap')
-    config_ldap_serv_username = Column(String)
-    config_ldap_serv_password = Column(String)
-    config_ldap_use_ssl = Column(Boolean, default=False)
-    config_ldap_use_tls = Column(Boolean, default=False)
-    config_ldap_require_cert = Column(Boolean, default=False)
-    config_ldap_cert_path = Column(String)
-    config_ldap_dn = Column(String)
-    config_ldap_user_object = Column(String)
-    config_ldap_openldap = Column(Boolean, default=False)
+    config_ldap_authentication = Column(SmallInteger, default=constants.LDAP_AUTH_SIMPLE)
+    config_ldap_serv_username = Column(String, default='cn=admin,dc=example,dc=org')
+    config_ldap_serv_password = Column(String, default="")
+    config_ldap_encryption = Column(SmallInteger, default=0)
+    config_ldap_cert_path = Column(String, default="")
+    config_ldap_dn = Column(String, default='dc=example,dc=org')
+    config_ldap_user_object = Column(String, default='uid=%s')
+    config_ldap_openldap = Column(Boolean, default=True)
+    config_ldap_group_object_filter = Column(String, default='(&(objectclass=posixGroup)(cn=%s))')
+    config_ldap_group_members_field = Column(String, default='memberUid')
+    config_ldap_group_name = Column(String, default='calibreweb')
 
     config_ebookconverter = Column(Integer, default=0)
     config_converterpath = Column(String)
@@ -179,11 +196,20 @@ class _ConfigSQL(object):
     def show_detail_random(self):
         return self.show_element_new_user(constants.DETAIL_RANDOM)
 
-    def show_mature_content(self):
-        return self.show_element_new_user(constants.MATURE_CONTENT)
+    def list_denied_tags(self):
+        mct = self.config_denied_tags.split(",")
+        return [t.strip() for t in mct]
 
-    def mature_content_tags(self):
-        mct = self.config_mature_content_tags.split(",")
+    def list_allowed_tags(self):
+        mct = self.config_allowed_tags.split(",")
+        return [t.strip() for t in mct]
+
+    def list_denied_column_values(self):
+        mct = self.config_denied_column_value.split(",")
+        return [t.strip() for t in mct]
+
+    def list_allowed_column_values(self):
+        mct = self.config_allowed_column_value.split(",")
         return [t.strip() for t in mct]
 
     def get_log_level(self):
@@ -196,7 +222,7 @@ class _ConfigSQL(object):
         return not bool(self.mail_server == constants.DEFAULT_MAIL_SERVER)
 
 
-    def set_from_dictionary(self, dictionary, field, convertor=None, default=None):
+    def set_from_dictionary(self, dictionary, field, convertor=None, default=None, encode=None):
         '''Possibly updates a field of this object.
         The new value, if present, is grabbed from the given dictionary, and optionally passed through a convertor.
 
@@ -212,7 +238,10 @@ class _ConfigSQL(object):
             return False
 
         if convertor is not None:
-            new_value = convertor(new_value)
+            if encode:
+                new_value = convertor(new_value.encode(encode))
+            else:
+                new_value = convertor(new_value)
 
         current_value = self.__dict__.get(field)
         if current_value == new_value:
@@ -250,6 +279,10 @@ class _ConfigSQL(object):
         '''Apply all configuration values to the underlying storage.'''
         s = self._read_from_storage()  # type: _Settings
 
+        if self.config_google_drive_watch_changes_response:
+            self.config_google_drive_watch_changes_response = json.dumps(
+                self.config_google_drive_watch_changes_response)
+
         for k, v in self.__dict__.items():
             if k[0] == '_':
                 continue
@@ -261,7 +294,9 @@ class _ConfigSQL(object):
         self._session.commit()
         self.load()
 
-    def invalidate(self):
+    def invalidate(self, error=None):
+        if error:
+            log.error(error)
         log.warning("invalidating configuration")
         self.db_configured = False
         self.config_calibre_dir = None
@@ -279,7 +314,7 @@ def _migrate_table(session, orm_class):
                 log.debug("%s: %s", column_name, err.args[0])
                 if column.default is not None:
                     if sys.version_info < (3, 0):
-                        if isinstance(column.default.arg,unicode):
+                        if isinstance(column.default.arg, unicode):
                             column.default.arg = column.default.arg.encode('utf-8')
                 if column.default is None:
                     column_default = ""
@@ -315,6 +350,7 @@ def _migrate_database(session):
     # make sure the table is created, if it does not exist
     _Base.metadata.create_all(session.bind)
     _migrate_table(session, _Settings)
+    _migrate_table(session, _Flask_Settings)
 
 
 def load_configuration(session):
@@ -323,5 +359,20 @@ def load_configuration(session):
     if not session.query(_Settings).count():
         session.add(_Settings())
         session.commit()
+    conf = _ConfigSQL(session)
+    # Migrate from global restrictions to user based restrictions
+    if bool(conf.config_default_show & constants.MATURE_CONTENT) and conf.config_denied_tags == "":
+        conf.config_denied_tags = conf.config_mature_content_tags
+        conf.save()
+        session.query(ub.User).filter(ub.User.mature_content != True). \
+            update({"denied_tags": conf.config_mature_content_tags}, synchronize_session=False)
+        session.commit()
+    return conf
 
-    return _ConfigSQL(session)
+def get_flask_session_key(session):
+    flask_settings = session.query(_Flask_Settings).one_or_none()
+    if flask_settings == None:
+        flask_settings = _Flask_Settings(os.urandom(32))
+        session.add(flask_settings)
+        session.commit()
+    return flask_settings.flask_session_key

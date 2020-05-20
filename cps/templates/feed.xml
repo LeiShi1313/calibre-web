@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dcterms="http://purl.org/dc/terms/">
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
   <id>urn:uuid:2853dacf-ed79-42f5-8e8a-a7bb3d1ae6a2</id>
   <updated>{{ current_time }}</updated>
   <link rel="self"
@@ -75,7 +75,11 @@
   {% endif %}
   {% for entry in listelements %}
   <entry>
+    {% if entry.__class__.__name__ == 'Shelf' and entry.is_public == 1 %}
+    <title>{{entry.name}} {{_('(Public)')}}</title>
+    {% else %}
     <title>{{entry.name}}</title>
+    {% endif %}
     <id>{{ url_for(folder, book_id=entry.id) }}</id>
     <link rel="subsection" type="application/atom+xml;profile=opds-catalog" href="{{url_for(folder, book_id=entry.id)}}"/>
   </entry>

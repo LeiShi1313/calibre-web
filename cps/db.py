@@ -25,13 +25,13 @@ import ast
 
 from sqlalchemy import create_engine
 from sqlalchemy import Table, Column, ForeignKey
-from sqlalchemy import String, Integer, Boolean
+from sqlalchemy import String, Integer, Boolean, TIMESTAMP, Float, DateTime
 from sqlalchemy.orm import relationship, sessionmaker, scoped_session
 from sqlalchemy.ext.declarative import declarative_base
 
 
 session = None
-cc_exceptions = ['datetime', 'comments', 'float', 'composite', 'series']
+cc_exceptions = ['datetime', 'comments', 'composite', 'series']
 cc_classes = {}
 engine = None
 
@@ -100,14 +100,14 @@ class Identifiers(Base):
             return self.type
 
     def __repr__(self):
-        if self.type == "amazon":
+        if self.type == "amazon" or self.type == "asin":
             return u"https://amzn.com/{0}".format(self.val)
         elif self.type == "isbn":
-            return u"http://www.worldcat.org/isbn/{0}".format(self.val)
+            return u"https://www.worldcat.org/isbn/{0}".format(self.val)
         elif self.type == "doi":
-            return u"http://dx.doi.org/{0}".format(self.val)
+            return u"https://dx.doi.org/{0}".format(self.val)
         elif self.type == "goodreads":
-            return u"http://www.goodreads.com/book/show/{0}".format(self.val)
+            return u"https://www.goodreads.com/book/show/{0}".format(self.val)
         elif self.type == "douban":
             return u"https://book.douban.com/subject/{0}".format(self.val)
         elif self.type == "google":
@@ -115,7 +115,7 @@ class Identifiers(Base):
         elif self.type == "kobo":
             return u"https://www.kobo.com/ebook/{0}".format(self.val)
         elif self.type == "lubimyczytac":
-            return u" http://lubimyczytac.pl/ksiazka/{0}".format(self.val)
+            return u" https://lubimyczytac.pl/ksiazka/{0}".format(self.val)
         elif self.type == "url":
             return u"{0}".format(self.val)
         else:
@@ -251,10 +251,10 @@ class Books(Base):
     title = Column(String)
     sort = Column(String)
     author_sort = Column(String)
-    timestamp = Column(String)
+    timestamp = Column(TIMESTAMP)
     pubdate = Column(String)
     series_index = Column(String)
-    last_modified = Column(String)
+    last_modified = Column(TIMESTAMP)
     path = Column(String)
     has_cover = Column(Integer)
     uuid = Column(String)
@@ -344,14 +344,13 @@ def setup_db(config):
                                isolation_level="SERIALIZABLE",
                                connect_args={'check_same_thread': False})
         conn = engine.connect()
-    except:
-        config.invalidate()
+        # conn.text_factory = lambda b: b.decode(errors = 'ignore') possible fix for #1302
+    except Exception as e:
+        config.invalidate(e)
         return False
 
     config.db_configured = True
     update_title_sort(config, conn.connection)
-    # conn.connection.create_function('lower', 1, lcase)
-    # conn.connection.create_function('upper', 1, ucase)
 
     if not cc_classes:
         cc = conn.execute("SELECT id, datatype FROM custom_columns")
@@ -378,6 +377,11 @@ def setup_db(config):
                               'id': Column(Integer, primary_key=True),
                               'book': Column(Integer, ForeignKey('books.id')),
                               'value': Column(Integer)}
+                elif row.datatype == 'float':
+                    ccdict = {'__tablename__': 'custom_column_' + str(row.id),
+                              'id': Column(Integer, primary_key=True),
+                              'book': Column(Integer, ForeignKey('books.id')),
+                              'value': Column(Float)}
                 else:
                     ccdict = {'__tablename__': 'custom_column_' + str(row.id),
                               'id': Column(Integer, primary_key=True),
@@ -385,7 +389,7 @@ def setup_db(config):
                 cc_classes[row.id] = type(str('Custom_Column_' + str(row.id)), (Base,), ccdict)
 
         for cc_id in cc_ids:
-            if (cc_id[1] == 'bool') or (cc_id[1] == 'int'):
+            if (cc_id[1] == 'bool') or (cc_id[1] == 'int') or (cc_id[1] == 'float'):
                 setattr(Books, 'custom_column_' + str(cc_id[0]), relationship(cc_classes[cc_id[0]],
                                                                            primaryjoin=(
                                                                            Books.id == cc_classes[cc_id[0]].book),
@@ -414,7 +418,7 @@ def dispose():
         except: pass
         if old_session.bind:
             try: old_session.bind.dispose()
-            except: pass
+            except Exception: pass
 
     for attr in list(Books.__dict__.keys()):
         if attr.startswith("custom_column_"):

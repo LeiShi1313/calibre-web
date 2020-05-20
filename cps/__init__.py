@@ -33,10 +33,9 @@ from flask_login import LoginManager
 from flask_babel import Babel
 from flask_principal import Principal
 
-from . import logger, cache_buster, cli, config_sql, ub, db, services
+from . import config_sql, logger, cache_buster, cli, ub, db
 from .reverseproxy import ReverseProxied
 from .server import WebServer
-
 
 mimetypes.init()
 mimetypes.add_type('application/xhtml+xml', '.xhtml')
@@ -57,11 +56,17 @@ mimetypes.add_type('application/ogg', '.ogg')
 mimetypes.add_type('application/ogg', '.oga')
 
 app = Flask(__name__)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    REMEMBER_COOKIE_SAMESITE='Lax',
+)
+
 
 lm = LoginManager()
 lm.login_view = 'web.login'
 lm.anonymous_user = ub.Anonymous
-
+lm.session_protection = 'strong'
 
 ub.init_db(cli.settingspath)
 # pylint: disable=no-member
@@ -75,6 +80,7 @@ _BABEL_TRANSLATIONS = set()
 
 log = logger.create()
 
+from . import services
 
 def create_app():
     app.wsgi_app = ReverseProxied(app.wsgi_app)
@@ -89,7 +95,7 @@ def create_app():
     log.info('Starting Calibre Web...')
     Principal(app)
     lm.init_app(app)
-    app.secret_key = os.getenv('SECRET_KEY', 'A0Zr98j/3yX R~XHH!jmN]LWX/,?RT')
+    app.secret_key = os.getenv('SECRET_KEY', config_sql.get_flask_session_key(ub.session))
 
     web_server.init_app(app, config)
     db.setup_db(config)
@@ -116,14 +122,13 @@ def get_locale():
         if user.nickname != 'Guest':   # if the account is the guest account bypass the config lang settings
             return user.locale
 
-    preferred = set()
+    preferred = list()
     if request.accept_languages:
         for x in request.accept_languages.values():
             try:
-                preferred.add(str(LC.parse(x.replace('-', '_'))))
+                preferred.append(str(LC.parse(x.replace('-', '_'))))
             except (UnknownLocaleError, ValueError) as e:
-                log.warning('Could not parse locale "%s": %s', x, e)
-                # preferred.append('en')
+                log.debug('Could not parse locale "%s": %s', x, e)
 
     return negotiate_locale(preferred or ['en'], _BABEL_TRANSLATIONS)
 
@@ -135,6 +140,4 @@ def get_timezone():
 
 from .updater import Updater
 updater_thread = Updater()
-
-
-__all__ = ['app']
+updater_thread.start()

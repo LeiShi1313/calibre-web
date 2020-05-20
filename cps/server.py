@@ -43,7 +43,6 @@ from . import logger
 log = logger.create()
 
 
-
 def _readable_listen_address(address, port):
     if ':' in address:
         address = "[" + address + "]"
@@ -84,7 +83,8 @@ class WebServer(object):
             if os.path.isfile(certfile_path) and os.path.isfile(keyfile_path):
                 self.ssl_args = dict(certfile=certfile_path, keyfile=keyfile_path)
             else:
-                log.warning('The specified paths for the ssl certificate file and/or key file seem to be broken. Ignoring ssl.')
+                log.warning('The specified paths for the ssl certificate file and/or key file seem to be broken. '
+                            'Ignoring ssl.')
                 log.warning('Cert path: %s', certfile_path)
                 log.warning('Key path:  %s', keyfile_path)
 
@@ -146,7 +146,7 @@ class WebServer(object):
                 self.unix_socket_file = None
 
     def _start_tornado(self):
-        if os.name == 'nt':
+        if os.name == 'nt' and sys.version_info > (3, 7):
             import asyncio
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         log.info('Starting Tornado server on %s', _readable_listen_address(self.listen_address, self.listen_port))
@@ -156,7 +156,7 @@ class WebServer(object):
                                  max_buffer_size=209700000,
                                  ssl_options=self.ssl_args)
         http_server.listen(self.listen_port, self.listen_address)
-        self.wsgiserver = IOLoop.instance()
+        self.wsgiserver = IOLoop.current()
         self.wsgiserver.start()
         # wait for stop signal
         self.wsgiserver.close(True)
@@ -171,12 +171,15 @@ class WebServer(object):
         except Exception as ex:
             log.error("Error starting server: %s", ex)
             print("Error starting server: %s" % ex)
+            self.stop()
             return False
         finally:
             self.wsgiserver = None
 
         if not self.restart:
             log.info("Performing shutdown of Calibre-Web")
+            # prevent irritiating log of pending tasks message from asyncio
+            logger.get('asyncio').setLevel(logger.logging.CRITICAL)
             return True
 
         log.info("Performing restart of Calibre-Web")
@@ -191,10 +194,13 @@ class WebServer(object):
         self.stop()
 
     def stop(self, restart=False):
+        from . import updater_thread
+        updater_thread.stop()
+
         log.info("webserver stop (restart=%s)", restart)
         self.restart = restart
         if self.wsgiserver:
             if _GEVENT:
                 self.wsgiserver.close()
             else:
-                self.wsgiserver.add_callback(self.wsgiserver.stop)
+                self.wsgiserver.add_callback_from_signal(self.wsgiserver.stop)
